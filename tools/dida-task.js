@@ -5,7 +5,10 @@
  * Auth: Bearer token (set DIDA365_ACCESS_TOKEN env var)
  *
  * Use case: Track progress of long-running Claude tasks
- * by creating/updating tasks under a dedicated project.
+ * by creating/updating tasks under a dedicated "Claude" project.
+ *
+ * The Open API does NOT support assigning projects to folders (groupId).
+ * User should manually drag the "Claude" project into their desired folder once.
  */
 
 const BASE_URL = "https://api.dida365.com/open/v1";
@@ -50,6 +53,7 @@ async function listProjects() {
     name: p.name,
     groupId: p.groupId,
     color: p.color,
+    kind: p.kind,
   }));
 }
 
@@ -61,26 +65,31 @@ async function getProjectTasks(projectId) {
       id: t.id,
       title: t.title,
       content: t.content,
+      desc: t.desc,
       status: t.status,
       priority: t.priority,
       dueDate: t.dueDate,
       items: t.items,
       tags: t.tags,
+      kind: t.kind,
     })),
   };
 }
 
-async function createTask({ projectId, title, content, priority, dueDate, items }) {
+async function createTask({ projectId, title, content, desc, priority, dueDate, items }) {
   const body = { projectId, title };
   if (content) body.content = content;
+  if (desc) body.desc = desc;
   if (priority !== undefined) body.priority = priority;
   if (dueDate) body.dueDate = dueDate;
-  if (items) body.items = items; // subtask checklist items
+  if (items) body.items = items;
   return api("POST", "/task", body);
 }
 
 async function updateTask(taskId, updates) {
-  return api("POST", `/task/${taskId}`, updates);
+  // API requires id and projectId in body
+  const body = { id: taskId, ...updates };
+  return api("POST", `/task/${taskId}`, body);
 }
 
 async function completeTask(projectId, taskId) {
@@ -89,27 +98,48 @@ async function completeTask(projectId, taskId) {
 }
 
 async function deleteTask(projectId, taskId) {
-  await api("DELETE", `/task/${projectId}/${taskId}`);
+  // Correct endpoint: DELETE /open/v1/project/{projectId}/task/{taskId}
+  await api("DELETE", `/project/${projectId}/task/${taskId}`);
   return { success: true, taskId };
 }
 
-// Claude folder groupId (set via DIDA365_GROUP_ID env, or auto-detect)
-function getGroupId() {
-  return process.env.DIDA365_GROUP_ID || null;
+async function moveTask(fromProjectId, toProjectId, taskId) {
+  return api("POST", "/task/move", [{ fromProjectId, toProjectId, taskId }]);
 }
 
-// Find the Claude folder's groupId by scanning existing projects
-async function findClaudeFolderGroupId() {
-  const envId = getGroupId();
-  if (envId) return envId;
-  // Auto-detect: look for projects in a group that looks like a Claude folder
+async function listCompletedTasks({ projectIds, startDate, endDate }) {
+  const body = {};
+  if (projectIds) body.projectIds = projectIds;
+  if (startDate) body.startDate = startDate;
+  if (endDate) body.endDate = endDate;
+  return api("POST", "/task/completed", body);
+}
+
+async function filterTasks({ projectIds, startDate, endDate, priority, tag, status }) {
+  const body = {};
+  if (projectIds) body.projectIds = projectIds;
+  if (startDate) body.startDate = startDate;
+  if (endDate) body.endDate = endDate;
+  if (priority) body.priority = priority;
+  if (tag) body.tag = tag;
+  if (status) body.status = status;
+  return api("POST", "/task/filter", body);
+}
+
+// Find or create the "Claude" project for tracking
+async function ensureClaudeProject() {
   const projects = await api("GET", "/project");
-  const claudeProject = projects.find(
-    (p) => p.groupId && /claude/i.test(p.name)
+  let claude = projects.find(
+    (p) => p.name === "Claude" || p.name === "🤖Claude" || p.name === "🤖 Claude"
   );
-  if (claudeProject) return claudeProject.groupId;
-  // Fallback: return null (project will be created at top level)
-  return null;
+  if (!claude) {
+    claude = await api("POST", "/project", {
+      name: "🤖 Claude",
+      kind: "TASK",
+      viewMode: "list",
+    });
+  }
+  return claude;
 }
 
 // Pick an emoji based on keywords in the title
@@ -137,36 +167,29 @@ function pickEmoji(title) {
   for (const [pattern, emoji] of rules) {
     if (pattern.test(t)) return emoji;
   }
-  return "🤖";
+  return "📋";
 }
 
 /**
- * High-level: Start tracking a Claude task.
- * Creates a NEW project (清单) inside the Claude folder for each tracked task.
- * Each project gets an auto-selected emoji and contains tasks as checklist steps.
+ * Start tracking a Claude task.
+ * Creates a task with subtask checklist items under the "Claude" project.
+ * Task title is auto-prefixed with an emoji based on keywords.
  *
  * Structure in Dida365:
- *   📂 Claude (folder/清单组)
- *   ├── 🔧 Refactor auth module        ← project per task
- *   │   ├── ☐ Analyze current code      ← task checklist items
- *   │   ├── ☐ Write tests
- *   │   └── ☐ Implement changes
- *   ├── 🚀 Setup CI pipeline
- *   │   └── ☐ Configure Actions
- *   └── 🐛 Fix payment bug
- *       └── ☐ Reproduce issue
+ *   📂 Claude folder (user drags project in once)
+ *   └── 🤖 Claude (project)
+ *       ├── 🔧 Refactor auth module        ← task with emoji
+ *       │   ├── ☐ Analyze current code      ← checklist items
+ *       │   └── ☐ Write tests
+ *       ├── 🚀 Setup CI pipeline
+ *       │   └── ☐ Configure Actions
+ *       └── 🐛 Fix payment bug
+ *           └── ☐ Reproduce issue
  */
 async function trackProgress({ taskTitle, steps }) {
-  const groupId = await findClaudeFolderGroupId();
+  const project = await ensureClaudeProject();
   const emoji = pickEmoji(taskTitle);
-  const projectName = `${emoji} ${taskTitle}`;
-
-  // Create a new project inside the Claude folder
-  const projectBody = { name: projectName };
-  if (groupId) projectBody.groupId = groupId;
-  const project = await api("POST", "/project", projectBody);
-
-  // Create a single task with checklist items for the steps
+  const displayTitle = `${emoji} ${taskTitle}`;
   const items = steps.map((step, i) => ({
     title: step,
     status: 0,
@@ -174,7 +197,7 @@ async function trackProgress({ taskTitle, steps }) {
   }));
   const task = await createTask({
     projectId: project.id,
-    title: taskTitle,
+    title: displayTitle,
     content: `Tracked by Claude at ${new Date().toISOString()}`,
     priority: 3,
     items,
@@ -189,7 +212,7 @@ async function trackProgress({ taskTitle, steps }) {
 }
 
 /**
- * Update progress: mark a subtask step as done and optionally add notes.
+ * Update progress: mark subtask steps as done and optionally add notes.
  */
 async function updateProgress({ taskId, projectId, completedSteps, notes }) {
   const data = await api("GET", `/project/${projectId}/data`);
@@ -198,7 +221,7 @@ async function updateProgress({ taskId, projectId, completedSteps, notes }) {
 
   const items = (task.items || []).map((item) => {
     if (completedSteps && completedSteps.includes(item.title)) {
-      return { ...item, status: 1 }; // 1 = completed
+      return { ...item, status: 1 };
     }
     return item;
   });
@@ -242,14 +265,15 @@ export const tools = [
       properties: {
         projectId: { type: "string", description: "Target project ID" },
         title: { type: "string", description: "Task title" },
-        content: { type: "string", description: "Task description/notes" },
+        content: { type: "string", description: "Task content/notes" },
+        desc: { type: "string", description: "Description of checklist" },
         priority: {
           type: "number",
           description: "0=none, 1=low, 3=medium, 5=high",
         },
         dueDate: {
           type: "string",
-          description: "Due date in ISO 8601 format",
+          description: "Due date in yyyy-MM-dd'T'HH:mm:ssZ format",
         },
         items: {
           type: "array",
@@ -258,10 +282,7 @@ export const tools = [
             type: "object",
             properties: {
               title: { type: "string" },
-              status: {
-                type: "number",
-                description: "0=uncompleted, 1=completed",
-              },
+              status: { type: "number", description: "0=normal, 1=completed" },
             },
           },
         },
@@ -277,7 +298,7 @@ export const tools = [
       type: "object",
       properties: {
         taskId: { type: "string", description: "Task ID to update" },
-        projectId: { type: "string", description: "Project ID the task belongs to" },
+        projectId: { type: "string", description: "Project ID the task belongs to (required)" },
         title: { type: "string" },
         content: { type: "string" },
         priority: { type: "number" },
@@ -293,7 +314,7 @@ export const tools = [
           },
         },
       },
-      required: ["taskId"],
+      required: ["taskId", "projectId"],
     },
     handler: ({ taskId, ...updates }) => updateTask(taskId, updates),
   },
@@ -324,9 +345,53 @@ export const tools = [
     handler: ({ projectId, taskId }) => deleteTask(projectId, taskId),
   },
   {
+    name: "dida_move_task",
+    description: "Move a task from one project to another in Dida365",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fromProjectId: { type: "string", description: "Source project ID" },
+        toProjectId: { type: "string", description: "Destination project ID" },
+        taskId: { type: "string", description: "Task ID to move" },
+      },
+      required: ["fromProjectId", "toProjectId", "taskId"],
+    },
+    handler: ({ fromProjectId, toProjectId, taskId }) =>
+      moveTask(fromProjectId, toProjectId, taskId),
+  },
+  {
+    name: "dida_list_completed",
+    description: "List completed tasks, optionally filtered by project and date range",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectIds: { type: "array", items: { type: "string" }, description: "Project IDs to filter" },
+        startDate: { type: "string", description: "Start date (yyyy-MM-dd'T'HH:mm:ssZ)" },
+        endDate: { type: "string", description: "End date (yyyy-MM-dd'T'HH:mm:ssZ)" },
+      },
+    },
+    handler: listCompletedTasks,
+  },
+  {
+    name: "dida_filter_tasks",
+    description: "Filter tasks by project, date, priority, tags, and status",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectIds: { type: "array", items: { type: "string" } },
+        startDate: { type: "string" },
+        endDate: { type: "string" },
+        priority: { type: "array", items: { type: "number" }, description: "0=none, 1=low, 3=medium, 5=high" },
+        tag: { type: "array", items: { type: "string" } },
+        status: { type: "array", items: { type: "number" }, description: "0=open, 2=completed" },
+      },
+    },
+    handler: filterTasks,
+  },
+  {
     name: "dida_track_progress",
     description:
-      'Start tracking a Claude task session. Creates a task with subtask steps under the "Claude" project. Use this when starting a complex, multi-step task.',
+      'Start tracking a Claude task. Creates a task with emoji and subtask steps under the "Claude" project. Use this when starting a complex, multi-step task.',
     inputSchema: {
       type: "object",
       properties: {
