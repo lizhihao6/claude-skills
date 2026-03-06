@@ -110,10 +110,22 @@ async function ensureClaudeProject() {
 
 /**
  * High-level: Start tracking a new Claude task session.
- * Creates a parent task with subtask checklist items.
+ * Creates a parent task with subtask checklist items under the "Claude" project.
+ * Task title is auto-prefixed with [MM-DD] date tag for chronological grouping.
+ *
+ * Structure in Dida365:
+ *   Claude (project, single top-level entry)
+ *   ├── [03-06] Refactor auth module     ← task with date prefix
+ *   │   ├── ☐ Analyze current code       ← checklist items (steps)
+ *   │   ├── ☐ Write tests
+ *   │   └── ☐ Implement changes
+ *   └── [03-05] Fix payment bug          ← completed tasks sink to bottom
  */
 async function trackProgress({ taskTitle, steps }) {
   const project = await ensureClaudeProject();
+  const now = new Date();
+  const dateTag = `${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const prefixedTitle = taskTitle.startsWith("[") ? taskTitle : `[${dateTag}] ${taskTitle}`;
   const items = steps.map((step, i) => ({
     title: step,
     status: 0, // 0 = uncompleted
@@ -121,8 +133,8 @@ async function trackProgress({ taskTitle, steps }) {
   }));
   const task = await createTask({
     projectId: project.id,
-    title: taskTitle,
-    content: `Tracked by Claude at ${new Date().toISOString()}`,
+    title: prefixedTitle,
+    content: `Tracked by Claude at ${now.toISOString()}`,
     priority: 3, // medium
     items,
   });
