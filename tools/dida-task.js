@@ -93,35 +93,80 @@ async function deleteTask(projectId, taskId) {
   return { success: true, taskId };
 }
 
-// Find or create the "claude" project for tracking
-async function ensureClaudeProject() {
+// Claude folder groupId (set via DIDA365_GROUP_ID env, or auto-detect)
+function getGroupId() {
+  return process.env.DIDA365_GROUP_ID || null;
+}
+
+// Find the Claude folder's groupId by scanning existing projects
+async function findClaudeFolderGroupId() {
+  const envId = getGroupId();
+  if (envId) return envId;
+  // Auto-detect: look for projects in a group that looks like a Claude folder
   const projects = await api("GET", "/project");
-  let claude = projects.find(
-    (p) => p.name.toLowerCase() === "claude" || p.name === "Claude"
+  const claudeProject = projects.find(
+    (p) => p.groupId && /claude/i.test(p.name)
   );
-  if (!claude) {
-    claude = await api("POST", "/project", {
-      name: "Claude",
-      color: "#6B5CE7",
-    });
+  if (claudeProject) return claudeProject.groupId;
+  // Fallback: return null (project will be created at top level)
+  return null;
+}
+
+// Pick an emoji based on keywords in the title
+function pickEmoji(title) {
+  const t = title.toLowerCase();
+  const rules = [
+    [/fix|bug|issue|error|crash/, "🐛"],
+    [/refactor|clean|restructure/, "🔧"],
+    [/test|spec|coverage/, "🧪"],
+    [/deploy|ci|cd|pipeline|release/, "🚀"],
+    [/doc|readme|guide|wiki/, "📝"],
+    [/auth|login|security|token/, "🔐"],
+    [/api|endpoint|route/, "🔌"],
+    [/ui|css|style|design|layout/, "🎨"],
+    [/perf|speed|optim|cache/, "⚡"],
+    [/db|database|migration|schema/, "🗄️"],
+    [/config|setup|init|install/, "⚙️"],
+    [/search|find|query/, "🔍"],
+    [/ai|model|ml|train/, "🧠"],
+    [/chat|message|notification/, "💬"],
+    [/file|upload|download|storage/, "📦"],
+    [/monitor|log|metric|alert/, "📊"],
+    [/network|http|request|socket/, "🌐"],
+  ];
+  for (const [pattern, emoji] of rules) {
+    if (pattern.test(t)) return emoji;
   }
-  return claude;
+  return "🤖";
 }
 
 /**
  * High-level: Start tracking a Claude task.
- * Uses the task title directly — group related work under one meaningful name.
+ * Creates a NEW project (清单) inside the Claude folder for each tracked task.
+ * Each project gets an auto-selected emoji and contains tasks as checklist steps.
  *
  * Structure in Dida365:
- *   Claude (project)
- *   ├── Refactor auth module             ← one task per project/feature
- *   │   ├── ☐ Analyze current code       ← checklist items (steps)
+ *   📂 Claude (folder/清单组)
+ *   ├── 🔧 Refactor auth module        ← project per task
+ *   │   ├── ☐ Analyze current code      ← task checklist items
  *   │   ├── ☐ Write tests
  *   │   └── ☐ Implement changes
- *   └── Setup CI pipeline
+ *   ├── 🚀 Setup CI pipeline
+ *   │   └── ☐ Configure Actions
+ *   └── 🐛 Fix payment bug
+ *       └── ☐ Reproduce issue
  */
 async function trackProgress({ taskTitle, steps }) {
-  const project = await ensureClaudeProject();
+  const groupId = await findClaudeFolderGroupId();
+  const emoji = pickEmoji(taskTitle);
+  const projectName = `${emoji} ${taskTitle}`;
+
+  // Create a new project inside the Claude folder
+  const projectBody = { name: projectName };
+  if (groupId) projectBody.groupId = groupId;
+  const project = await api("POST", "/project", projectBody);
+
+  // Create a single task with checklist items for the steps
   const items = steps.map((step, i) => ({
     title: step,
     status: 0,
