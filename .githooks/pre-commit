@@ -1,0 +1,23 @@
+#!/bin/bash
+# Pre-commit hook: block commits containing secrets
+
+PATTERNS='(AKIA[0-9A-Z]{16}|sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36}|-----BEGIN.*PRIVATE KEY-----|eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*)'
+
+# Check staged files only
+FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(js|json|md|ts)$' | grep -v '.github/' | grep -v '.githooks/')
+
+if [ -n "$FILES" ]; then
+  if git diff --cached -- $FILES | grep -En "$PATTERNS"; then
+    echo ""
+    echo "ERROR: Potential secret/token detected in staged changes!"
+    echo "Please remove the secret and use environment variables instead."
+    echo ""
+    exit 1
+  fi
+fi
+
+# Block .env from being committed
+if git diff --cached --name-only | grep -q '^\.env'; then
+  echo "ERROR: .env file should not be committed!"
+  exit 1
+fi

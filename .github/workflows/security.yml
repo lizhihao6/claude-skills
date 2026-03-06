@@ -1,0 +1,60 @@
+name: Security Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  secret-scan:
+    name: Secret Leak Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified --results=verified
+
+      - name: Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  lint:
+    name: Code Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+
+      - name: Verify no hardcoded tokens
+        run: |
+          echo "Checking for hardcoded secrets..."
+          PATTERNS='(AKIA[0-9A-Z]{16}|sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36}|-----BEGIN.*PRIVATE KEY-----|eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*)'
+          if grep -rEn "$PATTERNS" --include='*.js' --include='*.json' --include='*.md' --exclude-dir=node_modules .; then
+            echo "::error::Potential secret detected in code!"
+            exit 1
+          fi
+          echo "No hardcoded secrets found."
+
+      - name: Verify .env not committed
+        run: |
+          if [ -f .env ]; then
+            echo "::error::.env file should not be committed!"
+            exit 1
+          fi
+          echo "No .env file in repo."
+
+      - name: Test MCP server starts
+        run: |
+          echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | timeout 5 node index.js 2>/dev/null | jq .result.tools[].name
