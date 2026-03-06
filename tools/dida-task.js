@@ -142,7 +142,8 @@ async function ensureClaudeProject() {
   return claude;
 }
 
-// Pick an emoji based on keywords in the title
+// Pick an emoji comment prefix based on keywords in the title
+// Only used in task content/notes, NOT in the title itself
 function pickEmoji(title) {
   const t = title.toLowerCase();
   const rules = [
@@ -189,7 +190,6 @@ function pickEmoji(title) {
 async function trackProgress({ taskTitle, steps }) {
   const project = await ensureClaudeProject();
   const emoji = pickEmoji(taskTitle);
-  const displayTitle = `${emoji} ${taskTitle}`;
   const items = steps.map((step, i) => ({
     title: step,
     status: 0,
@@ -197,8 +197,8 @@ async function trackProgress({ taskTitle, steps }) {
   }));
   const task = await createTask({
     projectId: project.id,
-    title: displayTitle,
-    content: `Tracked by Claude at ${new Date().toISOString()}`,
+    title: taskTitle,
+    content: `${emoji} Tracked by Claude at ${new Date().toISOString()}`,
     priority: 3,
     items,
   });
