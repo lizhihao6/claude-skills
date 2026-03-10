@@ -1,0 +1,20 @@
+{
+  "name": "claude-skills",
+  "version": "0.1.0",
+  "description": "Shared MCP skill server for Claude - Dida365, Lark Wiki, and more",
+  "type": "module",
+  "bin": {
+    "claude-skills": "./index.js"
+  },
+  "main": "./index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@volcengine/openapi": "^1.36.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
