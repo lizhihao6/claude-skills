@@ -30,14 +30,15 @@ import {
 import { tools as didaTools } from "./tools/dida-task.js";
 import { tools as volcTools } from "./tools/volc-mlp.js";
 import { tools as veCloudTools } from "./tools/ve-cloud.js";
+import { tools as tcCloudTools } from "./tools/tencent-cloud.js";
 
 const server = new Server(
-  { name: "claude-skills", version: "0.2.0" },
+  { name: "claude-skills", version: "0.3.0" },
   { capabilities: { tools: {} } }
 );
 
 // Collect all tools from all skill modules
-const allTools = [...didaTools, ...volcTools, ...veCloudTools];
+const allTools = [...didaTools, ...volcTools, ...veCloudTools, ...tcCloudTools];
 const toolMap = new Map(allTools.map((t) => [t.name, t]));
 
 // List tools
