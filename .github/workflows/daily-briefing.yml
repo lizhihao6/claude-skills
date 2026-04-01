@@ -1,0 +1,19 @@
+name: Daily Morning Briefing
+
+on:
+  schedule:
+    - cron: '3 0 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm i -g @anthropic-ai/claude-code
+      - run: echo "$S" > /tmp/r.mjs && node /tmp/r.mjs
+        env:
+          S: ${{ secrets.BRIEFING_SCRIPT }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
